@@ -1,8 +1,7 @@
 # Base image
 FROM python:3.10-slim
 
-# 1. Environment Variables (Fix for the error)
-# DEBIAN_FRONTEND=noninteractive ye ensure karega ki koi sawal na pucha jaye
+# Environment Variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     DEBIAN_FRONTEND=noninteractive \
@@ -12,54 +11,47 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# 2. Install System Dependencies
-# Humne 'apt-get install -y' use kiya hai taaki wo automatically 'Yes' bole
+# 1. System Dependencies Install karein
+# Hum pehle hi saari zaroori libraries daal rahe hain taaki Chrome install mein dikat na aaye
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
-    gnupg \
     curl \
+    gnupg \
     unzip \
     xvfb \
-    libgconf-2-4 \
-    libxss1 \
-    libnss3 \
-    libnspr4 \
-    libasound2 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libdbus-1-3 \
-    libdrm2 \
-    libgbm1 \
-    libgtk-3-0 \
-    fonts-liberation \
-    xdg-utils \
     ca-certificates \
+    fonts-liberation \
+    libasound2 \
+    libatk-bridge2.0-0 \
+    libgtk-3-0 \
+    libnss3 \
+    libxss1 \
+    libgbm1 \
+    xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# 3. Install Google Chrome Stable
-RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list' \
+# 2. Google Chrome Stable Install (Direct .deb method - More Stable)
+RUN wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
     && apt-get update \
-    && apt-get install -y google-chrome-stable --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get install -y ./google-chrome-stable_current_amd64.deb \
+    && rm google-chrome-stable_current_amd64.deb
 
-# 4. Install Node.js (v18)
+# 3. Node.js Install (v18)
 RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
     && apt-get install -y nodejs
 
-# 5. Install Python Dependencies
+# 4. Python Dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 6. Install Node Dependencies
+# 5. Node Dependencies
 COPY package.json .
 RUN npm install
 
-# 7. Copy Code
+# 6. Copy Code
 COPY . .
 
-# Create Directories & Permissions
+# 7. Create Directories & Permissions
 RUN mkdir -p /app/gemini_prompts /app/output /app/jobs && \
     chmod -R 777 /app/output /app/jobs /app/gemini_prompts
 
