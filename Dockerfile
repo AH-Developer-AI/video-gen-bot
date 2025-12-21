@@ -11,8 +11,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# 1. System Dependencies Install karein
-# Hum pehle hi saari zaroori libraries daal rahe hain taaki Chrome install mein dikat na aaye
+# 1. Install System Dependencies (wget, curl, etc.)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     curl \
@@ -30,13 +29,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Google Chrome Stable Install (Direct .deb method - More Stable)
+# 2. Install Google Chrome Stable (NEW METHOD: Direct .deb)
+# Hum 'apt-key' use nahi kar rahe, hum seedha file download kar rahe hain.
 RUN wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
     && apt-get update \
     && apt-get install -y ./google-chrome-stable_current_amd64.deb \
     && rm google-chrome-stable_current_amd64.deb
 
-# 3. Node.js Install (v18)
+# 3. Install Node.js (v18)
 RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
     && apt-get install -y nodejs
 
