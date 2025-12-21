@@ -57,4 +57,4 @@ RUN mkdir -p /app/gemini_prompts /app/output /app/jobs && \
 
 # 8. Start
 EXPOSE 8000
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "main:app", "--host", "serene-expert", "--port", "8000"]
