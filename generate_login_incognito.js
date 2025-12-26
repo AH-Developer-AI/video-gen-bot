@@ -1,4 +1,4 @@
-// generate_video.js
+// generate_login_incognito.js
 
 // ✔ Headful, Persistent Profile ("gemini_profile")
 // ✔ ACCOUNT RESET: Deletes account -> Waits for "Agree" -> Clicks "Agree" -> Ready
