@@ -25,19 +25,22 @@ RUN python3 -m pip install --upgrade pip setuptools wheel
 WORKDIR /app
 
 # ───────── COPY APP FILES ─────────
-COPY ./app
+# Make sure you copy requirements.txt first to leverage caching
+COPY ./app/requirements.txt ./requirements.txt
+COPY ./app /app
 
 # ───────── INSTALL PYTHON DEPENDENCIES ─────────
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip3 install --no-cache-dir -r requirements.txt
 
 # ───────── INSTALL NODE DEPENDENCIES ─────────
 RUN npm install
 
-# ───────── MAKE START SCRIPT EXECUTABLE ─────────
-RUN chmod +x start.sh
+# ───────── COPY AND MAKE START SCRIPT EXECUTABLE ─────────
+COPY ./start.sh /app/start.sh
+RUN chmod +x /app/start.sh
 
 # ───────── EXPOSE PORTS ─────────
 EXPOSE 5900 6080 8000
 
 # ───────── START COMMAND ─────────
-CMD ["./start.sh"]
+CMD ["/app/start.sh"]
