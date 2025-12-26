@@ -1,13 +1,13 @@
-// generate_login_incognito.js
+// generate_video.js
 
-// ✔ Headful, Temp Profile, Login
-// ✔ Handles "I understand" (Twice)
-// ✔ Handles "Agree & get started" button
-// ✔ Round Robin Monitoring
-// ✔ Retry if > 140s (Max 3)
-// ✔ Fails immediately if "ucs-banned-answer" error is detected
-// ✔ Continuously clicks "Continue/Action" button if it appears during generation
-// ✔ REVISED: Force Click (JS) on XPath fallback
+// ✔ Headful, Persistent Profile ("gemini_profile")
+// ✔ ACCOUNT RESET: Deletes account -> Waits for "Agree" -> Clicks "Agree" -> Ready
+// ✔ Fix: Handles "I understand" confirmation screen appearing TWICE
+// ✔ Fix: Finds & Presses ENTER on 'identifierId' screen
+// ✔ Smart Login: Detects "Sign in" button OR standard Email input
+// ✔ INJECTED Auto-Clicker: Clicks 'Continue' button immediately inside browser
+// ✔ Round Robin Monitoring for Blob/Errors
+// ✔ NO RETRY: Skips scene if generation times out
 
 const fs = require("fs");
 const path = require("path");
@@ -23,30 +23,36 @@ for (const a of process.argv.slice(2)) {
 }
 
 // ========= CONFIG =========
-const GEMINI_URL = "https://business.gemini.google/";
+const GEMINI_URL = "https://auth.business.gemini.google/account-chooser?continueUrl=https://business.gemini.google/";
+const SETTINGS_URL = "https://business.gemini.google/settings/general";
 const BLOB_PREFIX = "blob:https://business.gemini.google/";
+
 const EMAIL =
   argMap.email || process.env.GEMINI_EMAIL || "1swzro22_354@latterlavender.cfd";
 const PASSWORD = argMap.password || process.env.GEMINI_PASSWORD || "Haris123@";
 const PROMPT_FILE = argMap.promptFile || process.env.PROMPT_FILE;
 
 if (!PROMPT_FILE) {
-  console.error("❌ No promptFile provided.");
+  console.error("❌ No promptFile provided. Use --promptFile=prompts.txt");
   process.exit(1);
 }
 
 const OUTPUT_DIR =
   argMap.outputDir || process.env.OUTPUT_DIR || path.join(process.cwd(), "output");
-
 const JOB_META_PATH = argMap.jobMeta || process.env.JOB_META_PATH || null;
+
+// ** PROFILE SETTING **
+const USER_DATA_DIR =
+  argMap.userDataDir ||
+  process.env.USER_DATA_DIR ||
+  path.join(process.cwd(), "gemini_profile");
 
 let maxTabs = parseInt(argMap.maxTabs || process.env.MAX_TABS || "1", 10);
 if (isNaN(maxTabs) || maxTabs <= 0) maxTabs = 1;
 if (maxTabs > 40) maxTabs = 40;
 
 const HEADLESS =
-  (argMap.headless || process.env.HEADLESS || "true").toLowerCase() === "true";
-
+  (argMap.headless || process.env.HEADLESS || "false").toLowerCase() === "true";
 const BROWSER_PATH = argMap.browserPath || process.env.BROWSER_PATH || null;
 
 // ========= HELPERS =========
@@ -72,7 +78,6 @@ function updateJobMeta(status, extra = {}) {
     meta.finished_at = new Date().toISOString();
     Object.assign(meta, extra);
     fs.writeFileSync(JOB_META_PATH, JSON.stringify(meta, null, 2));
-    console.log("Updated job meta status to:", status);
   } catch (err) {
     console.error("Failed to update job meta:", err);
   }
@@ -92,7 +97,153 @@ function loadPromptsFromFile(filePath) {
   return prompts;
 }
 
+// ========= BROWSER UTILS (NATIVE XPATH) =========
+async function clickByXpath(page, xpath) {
+  return page.evaluate((xp) => {
+    const result = document.evaluate(
+      xp,
+      document,
+      null,
+      XPathResult.FIRST_ORDERED_NODE_TYPE,
+      null
+    );
+    const el = result.singleNodeValue;
+    if (el) {
+      el.click();
+      return true;
+    }
+    return false;
+  }, xpath);
+}
+
+async function typeByXpath(page, xpath, text) {
+  return page.evaluate(
+    ({ xp, txt }) => {
+      const result = document.evaluate(
+        xp,
+        document,
+        null,
+        XPathResult.FIRST_ORDERED_NODE_TYPE,
+        null
+      );
+      const el = result.singleNodeValue;
+      if (el) {
+        el.value = txt;
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+        return true;
+      }
+      return false;
+    },
+    { xp: xpath, txt: text }
+  );
+}
+
+// ========= ACCOUNT RESET LOGIC =========
+async function handleAccountReset(page) {
+  console.log("♻️ Checking Account State (Reset Check)...");
+  
+  try {
+      await page.goto(GEMINI_URL, { waitUntil: "networkidle2" });
+  } catch(e) { console.log("Nav error in reset check (ignored):", e.message); }
+
+  await sleep(5000);
+
+  const isAgreePresentInitial = await page.evaluate(() => {
+    const btn = document.querySelector(".agree-button");
+    if (btn) return true;
+    const buttons = Array.from(document.querySelectorAll("button"));
+    return buttons.some((b) => b.innerText.includes("Agree & get started"));
+  });
+
+  if (isAgreePresentInitial) {
+    console.log("✅ 'Agree' button found initially. Clicking it...");
+    await clickAgreeButton(page);
+    return;
+  }
+
+  console.log("⚠️ 'Agree' button NOT found. Proceeding to DELETE Account...");
+
+  // 2. Go to Settings
+  await page.goto(SETTINGS_URL, { waitUntil: "networkidle2" });
+  await sleep(5000);
+
+  // 3. Click Delete Button
+  const deleteBtnXpath =
+    "/html/body/saas-settingsfe-root/main/saas-settingsfe-admin-page/mat-sidenav-container/mat-sidenav-content/saas-settingsfe-general-section/div/div[2]/div/div/button";
+  
+  const clickedDelete = await clickByXpath(page, deleteBtnXpath);
+  if (!clickedDelete) {
+    console.log("❌ Could not find Delete Button in Settings. Skipping reset.");
+    return;
+  }
+
+  console.log("🗑️ Delete button clicked. Waiting for dialog...");
+  await sleep(2000);
+
+  // 4. Type "DELETE"
+  const inputXpath =
+    "/html/body/div[2]/div/div[2]/mat-dialog-container/div/div/delete-agentspace-dialog/mat-dialog-content/form/mat-form-field/div[1]/div/div[2]/input";
+  
+  const typed = await typeByXpath(page, inputXpath, "DELETE");
+  if (!typed) {
+    console.log("❌ Could not find Delete Confirmation Input.");
+    return;
+  }
+  console.log("✍️ Typed 'DELETE'.");
+  await sleep(2000);
+
+  // 5. Click Final "Delete account" Button
+  const confirmBtnXpath =
+    "/html/body/div[2]/div/div[2]/mat-dialog-container/div/div/delete-agentspace-dialog/mat-dialog-actions/button[2]";
+  
+  const confirmed = await clickByXpath(page, confirmBtnXpath);
+  if (confirmed) {
+    console.log("✅ 'Delete account' clicked. Waiting for redirect...");
+    await sleep(5000); 
+    
+    // 🟢 AFTER DELETE: HANDLE AGREE BUTTON IMMEDIATELY 🟢
+    console.log("🔄 Post-Delete: Checking for 'Agree & get started'...");
+    await clickAgreeButton(page);
+  } else {
+    console.log("❌ Could not click Final Delete Button.");
+  }
+}
+
+async function clickAgreeButton(page) {
+    try {
+        const agreeBtnClass = ".agree-button";
+        if (await isElementPresent(page, agreeBtnClass, 5000)) {
+            console.log("⚠️ 'Agree & get started' found via Class. Clicking...");
+            await page.click(agreeBtnClass);
+            await sleep(5000);
+            await dismissWelcomeIfPresent(page);
+            return true;
+        }
+        // Fallback Text Check
+        const clickedByText = await page.evaluate(() => {
+            const buttons = Array.from(document.querySelectorAll("button"));
+            const target = buttons.find((b) => b.innerText.includes("Agree & get started"));
+            if (target) {
+                target.click();
+                return true;
+            }
+            return false;
+        });
+        if (clickedByText) {
+            console.log("⚠️ 'Agree & get started' found via Text. Clicked.");
+            await sleep(5000);
+            await dismissWelcomeIfPresent(page);
+            return true;
+        }
+    } catch(e) {
+        console.log("Agree button check failed:", e.message);
+    }
+    return false;
+}
+
 // ========= LOGIN =========
+
 async function isElementPresent(page, selector, timeout = 5000) {
   try {
     await page.waitForSelector(selector, { timeout });
@@ -136,194 +287,166 @@ async function dismissWelcomeIfPresent(page) {
     }
     return clickWelcomeLater();
   };
-
   try {
     const laterClicked = await page.evaluate(clickLaterScript);
-    console.log("Clicked 'I'll do this later' dialog button:", laterClicked);
-    await sleep(4000);
+    if (laterClicked) {
+      console.log("Clicked 'I'll do this later' dialog button.");
+      await sleep(4000);
+    }
   } catch (e) {
-    console.log("Welcome dialog dismiss error (ignored):", e.message);
+    // Ignore errors
   }
 }
 
 async function ensureLoggedInOnFirstTab(page) {
-  console.log("Opening Gemini login page on first tab...");
-  await page.goto(GEMINI_URL, { waitUntil: "networkidle2" });
+  console.log("Opening Gemini to check login status...");
+  
+  // 🔴 RETRY LOGIC FOR NAVIGATION (Only for loading the page, not for generation)
+  for (let i = 0; i < 3; i++) {
+    try {
+        await page.goto(GEMINI_URL, { waitUntil: "networkidle2" });
+        break; 
+    } catch (err) {
+        console.log(`⚠️ Navigation attempt ${i+1} failed: ${err.message}`);
+        await sleep(3000);
+    }
+  }
+  
   await sleep(3000);
+  // 🟢 PRIORITY 1: Check for "Agree" Button FIRST (Before Login) 🟢
+  const agreeClicked = await clickAgreeButton(page);
+  if (agreeClicked) {
+      console.log("✅ Accepted 'Agree & get started'. Ready.");
+      return; 
+  }
 
-  if (await isElementPresent(page, "#email-input", 8000)) {
-    console.log("Login required: entering email...");
+  // 1. Check for "Sign in" Session Button
+  const signInXpath = "/html/body/c-wiz/div/div/div[1]/div/div[1]/div[3]/ul/li[1]/div/div/div[4]/span[1]/div/button";
+  console.log("🔎 Checking for Saved Session 'Sign in' button...");
+  
+  const signInButtonClicked = await page.evaluate((xpath) => {
+      try {
+          const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+          const btn = result.singleNodeValue;
+          if (btn) {
+              btn.click();
+              return true;
+          }
+          const allBtns = Array.from(document.querySelectorAll('button'));
+          const fallback = allBtns.find(b => b.innerText.includes("Sign in") || (b.getAttribute('aria-label') && b.getAttribute('aria-label').includes("Sign in")));
+          if (fallback) {
+              fallback.click();
+              return true;
+          }
+      } catch(e) { return false; }
+      return false;
+  }, signInXpath);
 
+  if (signInButtonClicked) {
+      console.log("✅ 'Sign in' button FOUND and CLICKED! Waiting for password...");
+      await sleep(3000); 
+  } else {
+      console.log("ℹ️ 'Sign in' button not found via XPath/Text.");
+  }
+
+  // 2. Determine next steps
+  let needsEmailEntry = false;
+  
+  if (!signInButtonClicked) {
+      const emailFieldPresent = await page.evaluate(() => !!document.querySelector("#email-input"));
+      if (emailFieldPresent) {
+          needsEmailEntry = true;
+      } else {
+          // Check if Dashboard is visible
+          const isPromptAreaVisible = await page.evaluate(() => !!document.querySelector("ucs-standalone-app"));
+          if(isPromptAreaVisible) {
+             console.log("✅ Already logged in (Dashboard visible).");
+          } else {
+             // If NO Dashboard, NO Email, NO Sign-in, and NO Agree button
+             console.log("ℹ️ No obvious login element found. Retrying email detection...");
+             needsEmailEntry = true;
+          }
+      }
+  }
+
+  // === EMAIL ENTRY FLOW ===
+  if (needsEmailEntry) {
+    console.log("🔒 Starting Standard Email Login...");
     let loginSuccess = false;
     let attempt = 0;
-    const maxAttempts = 10; 
-
-    // === LOGIN LOOP ===
+    const maxAttempts = 5;
     while (!loginSuccess && attempt < maxAttempts) {
       attempt++;
-      console.log(`\n🔄 Login Process Attempt: ${attempt}`);
-
+      console.log(`\n🔄 Email Entry Attempt: ${attempt}`);
       try {
-        // 1. Enter Email
         const emailInput = await page.waitForSelector("#email-input", { timeout: 10000 });
         await emailInput.click();
         await page.evaluate((el) => (el.value = ""), emailInput);
         await emailInput.type(EMAIL);
         console.log("Email entered!");
-
-        // 2. Click Continue
         const continueBtn = await page.waitForSelector("#log-in-button", { timeout: 10000 });
         await continueBtn.click();
-        console.log("Continue clicked. Waiting 8s...");
-        
-        // 3. Wait 8 Seconds
-        await sleep(8000);
+        console.log("Continue clicked. Waiting 8s for next screen...");
+        await sleep(5000);
 
-        // 4. Check for identifierId
+        // LOOK FOR IDENTIFIER ID
         try {
-          const idInput = await page.waitForSelector("#identifierId", { timeout: 5000 });
-          await idInput.press("Enter");
-          console.log("✅ identifierId Found & Next pressed!");
-          loginSuccess = true; 
-        } catch (idErr) {
-          console.log("⚠️ identifierId NOT found.");
-
-          if (attempt < maxAttempts) {
-             console.log("⚠️ Triggering Force Click on Fallback XPath (3 attempts)...");
-            
-            // 5. Force Click Fallback Button (Full XPath)
-            const xpath = "/html/body/c-wiz/div/div/div/div/div/div/div/div/div/div/div/button";
-            let buttonClicked = false;
-
-            for (let i = 1; i <= 3; i++) {
-                try {
-                    // Wait specifically for the xpath to be present
-                    const buttonHandle = await page.waitForXPath(xpath, { timeout: 3000 });
-                    
-                    if (buttonHandle) {
-                        // FORCE CLICK using Evaluate (Native JS click)
-                        await page.evaluate(el => el.click(), buttonHandle);
-                        console.log(`✅ Fallback button FORCE CLICKED (Attempt ${i}).`);
-                        buttonClicked = true;
-                        break;
-                    } else {
-                        console.log(`❌ XPath element handle is null (Attempt ${i}).`);
-                    }
-                } catch (xErr) {
-                    console.log(`❌ XPath not found or not clickable (Attempt ${i}):`, xErr.message);
-                }
-
-                if (!buttonClicked && i < 3) {
-                    console.log("Waiting 5s before retrying button click...");
-                    await sleep(5000);
-                }
+            const idInput = await page.waitForSelector("#identifierId", { timeout: 8000 });
+            if (idInput) {
+                console.log("✅ 'identifierId' found! Pressing Enter...");
+                await idInput.press("Enter");
+                await sleep(5000);
             }
+        } catch (e) {}
 
-            // 6. Wait 8 Seconds before restarting the main login loop
-            console.log("Waiting 8s before retrying email entry...");
-            await sleep(8000);
-          }
-        }
+        loginSuccess = true;
       } catch (err) {
-        console.log(`Login cycle error (Attempt ${attempt}):`, err.message);
+        console.log(`Email entry error: ${err.message}`);
         await sleep(3000);
       }
     }
-    // === END LOGIN LOOP ===
-
-    if (!loginSuccess) {
-        console.error("❌ Failed to pass email stage after multiple attempts.");
-    }
-
-    await sleep(4000);
-    try {
-      const passInput = await page.waitForSelector('input[name="Passwd"]', {
-        timeout: 15000,
-      });
-      await passInput.click();
-      await passInput.type(PASSWORD);
-      console.log("Password entered!");
-      await passInput.press("Enter");
-    } catch {
-      console.log("Password field not found, maybe manual login needed or already processed!");
-    }
-
-    console.log("Checking for confirmation screens...");
-    await sleep(5000);
-
-    // === 1. First Attempt: "I understand" ===
-    try {
-      const confirmSelector = 'input[value="I understand"], #confirm';
-      if (await isElementPresent(page, confirmSelector, 5000)) {
-        console.log("⚠️ 'I understand' confirmation detected (1st time). Clicking...");
-        await page.click(confirmSelector);
-        await sleep(7000);
-      }
-    } catch (err) {
-      console.log("Confirm check 1 (ignored):", err.message);
-    }
-
-    // === 2. Second Attempt: "I understand" (if it appears again) ===
-    try {
-      const confirmSelector = 'input[value="I understand"], #confirm';
-      if (await isElementPresent(page, confirmSelector, 5000)) {
-        console.log("⚠️ 'I understand' confirmation detected AGAIN. Clicking...");
-        await page.click(confirmSelector);
-        await sleep(5000);
-      }
-    } catch (err) {
-      console.log("Confirm check 2 (ignored):", err.message);
-    }
-
-    // === 3. "Agree & get started" Button Check ===
-    try {
-      console.log("🔎 Checking for 'Agree & get started' button...");
-      // Strategy A: By class (safer)
-      const agreeBtnClass = ".agree-button";
-      const isPresent = await isElementPresent(page, agreeBtnClass, 10000);
-      if (isPresent) {
-        console.log("⚠️ Found 'Agree & get started' via Class. Clicking...");
-        await page.click(agreeBtnClass);
-        await sleep(5000);
-      } else {
-        // Strategy B: By Text Content (Backup)
-        const clickedByText = await page.evaluate(() => {
-          const buttons = Array.from(document.querySelectorAll("button"));
-          const target = buttons.find((b) =>
-            b.innerText.includes("Agree & get started")
-          );
-          if (target) {
-            target.click();
-            return true;
-          }
-          return false;
-        });
-
-        if (clickedByText) {
-          console.log("⚠️ Found 'Agree & get started' via Text. Clicked.");
-          await sleep(5000);
-        } else {
-          console.log("ℹ️ 'Agree & get started' button not found.");
-        }
-      }
-    } catch (err) {
-      console.log("Agree button check error:", err.message);
-    }
-
-    console.log(
-      "\n⚠️ If extra verification appears (2FA, phone, captcha), UI handle karega."
-    );
-    await sleep(20000);
-  } else {
-    console.log("Already logged in / email field not visible.");
-    await sleep(5000);
   }
 
+  // === PASSWORD ENTRY FLOW ===
+  if (signInButtonClicked || needsEmailEntry) {
+      console.log("🔑 Waiting for Password field...");
+      try {
+        const passInput = await page.waitForSelector('input[name="Passwd"]', {
+            timeout: 15000, 
+        });
+        await passInput.click();
+        await sleep(500);
+        await passInput.type(PASSWORD);
+        console.log("Password entered!");
+        await passInput.press("Enter");
+        await sleep(8000); 
+      } catch (e) {
+          console.log("ℹ️ Password field not found (maybe auto-logged in?):", e.message);
+      }
+  }
+
+  // === CONFIRMATIONS ===
+  console.log("Checking for confirmation screens...");
+  for (let i = 1; i <= 2; i++) {
+      try {
+        const confirmSelector = 'input[value="I understand"], #confirm';
+        if (await isElementPresent(page, confirmSelector, 5000)) {
+          console.log(`⚠️ 'I understand' found (Occurrence ${i}). Clicking...`);
+          await page.click(confirmSelector);
+          await sleep(5000);
+        } else {
+            if(i === 1) break;
+        }
+      } catch (_) {}
+  }
+
+  // Final check for Agree button (in case it appeared after login)
+  await clickAgreeButton(page);
   await dismissWelcomeIfPresent(page);
-  console.log("Login + welcome dialog flow finished on first tab.");
+  console.log("✅ Ready to generate.");
 }
 
-// ========= CHECKS (Blob & Error & Specific Button) =========
+// ========= CHECKS & AUTO-CLICKER INJECTION =========
 
 async function findBlobUrlNow(page, prefix) {
   return page.evaluate((innerPrefix) => {
@@ -352,7 +475,6 @@ async function findBlobUrlNow(page, prefix) {
   }, prefix);
 }
 
-// Check for "ucs-banned-answer" component inside Shadow DOM
 async function checkBannedError(page) {
   return page.evaluate(() => {
     const visited = new Set();
@@ -377,48 +499,60 @@ async function checkBannedError(page) {
   });
 }
 
-// ** NEW FUNCTION **: Check for the specific md-filled-button in ucs-conversation and click it
-async function checkAndClickContinueButton(page) {
-  return page.evaluate(() => {
-    try {
-      const app = document.querySelector("ucs-standalone-app");
-      if (!app || !app.shadowRoot) return false;
-
-      // Recursive walker to find the button inside ucs-conversation
-      let targetBtn = null;
-      const visited = new Set();
-
-      function walk(node) {
-        if (targetBtn) return;
-        if (!node || visited.has(node)) return;
-        visited.add(node);
-
-        if (node.tagName && node.tagName.toLowerCase() === "md-filled-button") {
-          targetBtn = node;
-          return;
+// ** NEW: INJECTED AUTO-CLICKER **
+async function injectAutoClicker(page) {
+  console.log("💉 Injecting background auto-clicker into tab...");
+  await page.evaluate(() => {
+    window.autoClickerInterval = setInterval(() => {
+      try {
+        function deepQuery(root, matchFn) {
+          if (!root) return null;
+          const queue = [root];
+          const visited = new Set();
+          while (queue.length > 0) {
+            const node = queue.shift();
+            if (visited.has(node)) continue;
+            visited.add(node);
+            if (matchFn(node)) return node;
+            if (node.shadowRoot) {
+              const shadowChildren = node.shadowRoot.querySelectorAll("*");
+              for (const child of shadowChildren) queue.push(child);
+            }
+            if (node.children) {
+              for (const child of node.children) queue.push(child);
+            }
+          }
+          return null;
         }
 
-        if (node.shadowRoot) walk(node.shadowRoot);
-        if (node.children) {
-          for (const child of node.children) walk(child);
+        const app = document.querySelector("ucs-standalone-app");
+        if (!app) return;
+        const conversation = deepQuery(
+          app,
+          (n) => n.tagName && n.tagName.toLowerCase() === "ucs-conversation"
+        );
+        if (!conversation) return;
+        const mdButton = deepQuery(
+          conversation,
+          (n) => n.tagName && n.tagName.toLowerCase() === "md-filled-button"
+        );
+        if (!mdButton) return;
+
+        let realBtn = null;
+        if (mdButton.shadowRoot) {
+          realBtn =
+            mdButton.shadowRoot.getElementById("button") ||
+            mdButton.shadowRoot.querySelector("button");
+        } else {
+          realBtn = mdButton.querySelector("button");
         }
+
+        if (realBtn) {
+          realBtn.click();
+        }
+      } catch (e) {
       }
-
-      walk(app.shadowRoot);
-
-      if (targetBtn) {
-        const innerBtn = targetBtn.shadowRoot
-          ? targetBtn.shadowRoot.querySelector("button")
-          : targetBtn.querySelector("button");
-
-        const clickTarget = innerBtn || targetBtn;
-        clickTarget.click();
-        return true;
-      }
-    } catch (e) {
-      // console.log(e);
-    }
-    return false;
+    }, 500); 
   });
 }
 
@@ -431,7 +565,9 @@ async function openToolsAndClickGenerate(page) {
     const landing = app.shadowRoot.querySelector("ucs-chat-landing");
     if (!landing || !landing.shadowRoot) return false;
     const landingRoot = landing.shadowRoot;
-    const hostDiv = landingRoot.querySelector("div > div > div > div:nth-child(1)");
+    const hostDiv = landingRoot.querySelector(
+      "div > div > div > div:nth-child(1)"
+    );
     if (!hostDiv) return false;
     const searchBar = hostDiv.querySelector("ucs-search-bar");
     if (!searchBar || !searchBar.shadowRoot) return false;
@@ -444,12 +580,13 @@ async function openToolsAndClickGenerate(page) {
     if (!toolsRow) return false;
     const tooltipWrapper = toolsRow.querySelector(".tooltip-wrapper");
     if (!tooltipWrapper) return false;
-    const btn = tooltipWrapper.querySelector("button, md-icon-button, md-text-button");
+    const btn = tooltipWrapper.querySelector(
+      "button, md-icon-button, md-text-button"
+    );
     if (!btn) return false;
     btn.click();
     return true;
   });
-
   await sleep(2000);
 
   const menuClicked = await page.evaluate(() => {
@@ -473,6 +610,7 @@ async function openToolsAndClickGenerate(page) {
     const items = findMenuItemsInShadows();
     if (!items.length) return false;
     const TARGET_TEXT = "Generate a video";
+
     for (let i = 0; i < items.length; i++) {
       const txt = (items[i].innerText || "").trim();
       if (txt.includes(TARGET_TEXT)) {
@@ -490,7 +628,6 @@ async function openToolsAndClickGenerate(page) {
     }
     return false;
   });
-
   await sleep(2000);
 }
 
@@ -501,7 +638,9 @@ async function enterPromptAndSend(page, promptText) {
     const landing = app.shadowRoot.querySelector("ucs-chat-landing");
     if (!landing || !landing.shadowRoot) return false;
     const landingRoot = landing.shadowRoot;
-    const hostDiv = landingRoot.querySelector("div > div > div > div:nth-child(1)");
+    const hostDiv = landingRoot.querySelector(
+      "div > div > div > div:nth-child(1)"
+    );
     if (!hostDiv) return false;
     const searchBar = hostDiv.querySelector("ucs-search-bar");
     if (!searchBar || !searchBar.shadowRoot) return false;
@@ -516,6 +655,7 @@ async function enterPromptAndSend(page, promptText) {
     const p = editorRoot.querySelector("div > div > div > p");
     if (!p) return false;
     p.innerText = text;
+
     try {
       p.dispatchEvent(new InputEvent("input", { bubbles: true }));
     } catch (_) {
@@ -536,16 +676,22 @@ async function enterPromptAndSend(page, promptText) {
     }
     const app = document.querySelector("ucs-standalone-app");
     if (!app) return false;
-    const landing = qShadow(app, "ucs-chat-landing") || app.querySelector("ucs-chat-landing");
+    const landing =
+      qShadow(app, "ucs-chat-landing") || app.querySelector("ucs-chat-landing");
     if (!landing) return false;
     const landingRoot = landing.shadowRoot || landing;
-    const hostDiv = landingRoot.querySelector("div > div > div > div:nth-child(1)");
+    const hostDiv = landingRoot.querySelector(
+      "div > div > div > div:nth-child(1)"
+    );
     if (!hostDiv) return false;
-    const searchBar = hostDiv.querySelector("ucs-search-bar") || qShadow(hostDiv, "ucs-search-bar");
+    const searchBar =
+      hostDiv.querySelector("ucs-search-bar") ||
+      qShadow(hostDiv, "ucs-search-bar");
     if (!searchBar) return false;
     const sbRoot = searchBar.shadowRoot || searchBar;
     const form = sbRoot.querySelector("form");
     if (!form) return false;
+
     const iconButtons = Array.from(form.querySelectorAll("md-icon-button"));
     if (!iconButtons.length) return false;
 
@@ -577,6 +723,7 @@ async function enterPromptAndSend(page, promptText) {
         target.querySelector("md-ripple") ||
         target;
     }
+
     if (!clickTarget) return false;
     clickTarget.click();
     return true;
@@ -606,10 +753,12 @@ async function downloadBlobVideo(page, blobUrl, outputFile) {
 }
 
 // ========= MAIN =========
+
 async function main() {
   try {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
     const prompts = loadPromptsFromFile(PROMPT_FILE);
+
     if (!prompts.length) {
       console.log("No prompts loaded. Exiting.");
       updateJobMeta("failed", { reason: "no_prompts" });
@@ -630,25 +779,29 @@ async function main() {
         "--disable-dev-shm-usage",
         "--disable-extensions",
         "--disable-gpu",
-        "--window-size=1920,1080",
+        "--window-size=1280,720",
         "--start-maximized",
         "--disable-blink-features=AutomationControlled",
         "--disable-infobars",
         "--ignore-certificate-errors",
         "--allow-running-insecure-content",
       ],
-      defaultViewport: { width: 1920, height: 1080 },
+      defaultViewport: { width: 1280, height: 720 },
     };
 
     if (BROWSER_PATH) launchOptions.executablePath = BROWSER_PATH;
 
-    console.log("Launching browser with options:", launchOptions);
+    console.log(`📂 Using Profile Directory: ${USER_DATA_DIR}`);
+    launchOptions.userDataDir = USER_DATA_DIR;
+
+    console.log("Launching browser...");
     const browser = await puppeteer.launch(launchOptions);
 
     try {
       for (let start = 0; start < total; start += maxTabs) {
         const batchPrompts = prompts.slice(start, start + maxTabs);
         const batchNumber = Math.floor(start / maxTabs) + 1;
+
         console.log(
           `\n========= BATCH ${batchNumber} | Prompts ${start + 1} to ${
             start + batchPrompts.length
@@ -663,15 +816,32 @@ async function main() {
 
         const firstPage = pages[0];
         if (firstPage) {
-          console.log("⚡ Switching focus to the login tab...");
+          console.log("⚡ Focus on first tab...");
           await firstPage.bringToFront();
         }
 
-        await ensureLoggedInOnFirstTab(firstPage);
+        // ============================================
+        // 🔄 CHECK: 10 VIDEOS ACCOUNT RESET LOGIC
+        // ============================================
+        if (start > 0 && start % 10 === 0) {
+           console.log(`⚠️ 10 Videos Threshold Reached (Current Index: ${start}). Performing Account Reset Check...`);
+           await handleAccountReset(firstPage);
+           await sleep(5000);
+        }
 
-        console.log("Reloading all tabs to Gemini after login...");
+        // Login Check (First Tab Only)
+        await ensureLoggedInOnFirstTab(firstPage);
+        console.log("Navigating all tabs to Gemini...");
+        
         await Promise.all(
-          pages.map((p) => p.goto(GEMINI_URL, { waitUntil: "networkidle2" }))
+          pages.map(async (p) => {
+              try {
+                  await p.goto(GEMINI_URL, { waitUntil: "networkidle2" });
+              } catch(e) {
+                  console.log("Page nav retry (batch start)...");
+                  try { await p.goto(GEMINI_URL, { waitUntil: "networkidle2" }); } catch(_) {}
+              }
+          })
         );
         await sleep(5000);
 
@@ -681,19 +851,23 @@ async function main() {
           sceneNumber: globalIndex + 1 + idx,
           finished: false,
           startTime: null,
-          retryCount: 0,
+          // retryCount removed
         }));
-        globalIndex += batchPrompts.length;
 
+        globalIndex += batchPrompts.length;
         console.log("🚀 Submitting prompts to all tabs...");
+
         await Promise.all(
           batchJobs.map(async (job) => {
             console.log(` [Scene ${job.sceneNumber}] Submitting...`);
             try {
               await openToolsAndClickGenerate(job.page);
               await enterPromptAndSend(job.page, job.prompt);
+              await injectAutoClicker(job.page);
               job.startTime = Date.now();
-              console.log(` [Scene ${job.sceneNumber}] Submitted.`);
+              console.log(
+                ` [Scene ${job.sceneNumber}] Submitted & Auto-Clicker active.`
+              );
             } catch (e) {
               console.error(
                 ` [Scene ${job.sceneNumber}] Submit Failed:`,
@@ -704,9 +878,11 @@ async function main() {
           })
         );
 
-        console.log("\n✅ All prompts submitted. Monitoring...");
+        console.log("\n✅ All prompts submitted. Monitoring (Background)...");
 
+        // Batch global timeout (10 mins)
         const batchTimeout = Date.now() + 600 * 1000;
+
         while (batchJobs.some((j) => !j.finished)) {
           if (Date.now() > batchTimeout) {
             console.log("⚠️ Batch timeout reached (10 mins). Moving on.");
@@ -719,16 +895,6 @@ async function main() {
             pendingCount++;
 
             try {
-              await job.page.bringToFront();
-
-              const btnClicked = await checkAndClickContinueButton(job.page);
-              if (btnClicked) {
-                console.log(
-                  `🖱️ Scene ${job.sceneNumber}: Clicked 'Continue/Action' button.`
-                );
-                await sleep(2000);
-              }
-
               // 1. CHECK FOR BLOB
               const blobUrl = await findBlobUrlNow(job.page, BLOB_PREFIX);
               if (blobUrl) {
@@ -744,6 +910,7 @@ async function main() {
                 const fileName = makeRandomFileName(job.sceneNumber);
                 const outputFile = path.join(OUTPUT_DIR, fileName);
                 await downloadBlobVideo(job.page, blobUrl, outputFile);
+
                 job.finished = true;
                 continue;
               }
@@ -758,55 +925,36 @@ async function main() {
                 continue;
               }
 
-              // 3. CHECK TIMEOUT & RETRY
+              // 3. CHECK TIMEOUT (NO RETRY - JUST SKIP)
               const elapsed = Date.now() - job.startTime;
-              const TIMEOUT_MS = 140000; // 140 sec
+              const TIMEOUT_MS = 200000; // 200 seconds
               if (elapsed > TIMEOUT_MS) {
-                if (job.retryCount < 3) {
-                  console.log(
-                    `🔄 Scene ${job.sceneNumber} timed out (>140s). Retrying (${
-                      job.retryCount + 1
-                    }/3)...`
-                  );
-                  try {
-                    await job.page.goto(GEMINI_URL, {
-                      waitUntil: "networkidle2",
-                    });
-                    await sleep(3000);
-                    await openToolsAndClickGenerate(job.page);
-                    await enterPromptAndSend(job.page, job.prompt);
-                    job.startTime = Date.now();
-                    job.retryCount++;
-                    console.log(` [Scene ${job.sceneNumber}] Retry submitted.`);
-                  } catch (retryErr) {
-                    console.error(
-                      `❌ Retry failed for Scene ${job.sceneNumber}:`,
-                      retryErr.message
-                    );
-                    job.retryCount++;
-                    job.startTime = Date.now();
-                  }
-                } else {
-                  console.log(
-                    `⏳ Scene ${job.sceneNumber}: Timed out & Max retries reached.`
-                  );
-                }
-              } else {
                 console.log(
-                  `⏳ Scene ${job.sceneNumber}: Generating... (${(
-                    elapsed / 1000
-                  ).toFixed(0)}s)`
+                  `⏩ Scene ${job.sceneNumber} timed out (>200s). SKIPPING per instruction.`
                 );
+                job.finished = true; // Mark as done so loop continues
+                continue;
               }
+              
+              // Logging progress
+              if (elapsed % 30000 < 5000) {
+                  console.log(
+                    `⏳ Scene ${job.sceneNumber}: Processing... (${(
+                      elapsed / 1000
+                    ).toFixed(0)}s)`
+                  );
+              }
+
             } catch (err) {
               console.log(
                 `Error checking Scene ${job.sceneNumber}:`,
                 err.message
               );
             }
-            if (!job.finished) await sleep(5000);
           }
+
           if (pendingCount === 0) break;
+          if (!batchJobs.every((j) => j.finished)) await sleep(2000);
         }
 
         console.log(`=== Batch ${batchNumber} completed ===`);
@@ -821,12 +969,14 @@ async function main() {
       updateJobMeta("completed", { total_scenes: globalIndex });
       await browser.close();
       process.exit(0);
+
     } catch (err) {
       console.error("Error during batches:", err);
       updateJobMeta("failed", { error: String(err) });
       await browser.close();
       process.exit(1);
     }
+
   } catch (err) {
     console.error("Fatal error:", err);
     updateJobMeta("failed", { error: String(err) });
