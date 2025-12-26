@@ -3,6 +3,3 @@ uvicorn
 pydantic
 requests
 typing
-zipfile
-pathlib
-uuid
