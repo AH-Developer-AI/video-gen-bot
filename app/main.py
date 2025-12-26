@@ -19,7 +19,7 @@ app = FastAPI()
 
 # ───────── CONFIG ─────────
 
-NODE_WORKDIR = "/root"   # Ensure generate_login_incognito.js is here
+NODE_WORKDIR = "/app"   # Ensure generate_login_incognito.js is here
 GENERATE_SCRIPT = "generate_login_incognito.js"
 NODE_ID = os.getenv("NODE_ID", "vm-unknown")
 NODE_PUBLIC_URL = os.getenv("NODE_PUBLIC_URL", "")  # e.g. "http://209.xx.xx.xx:8000"
@@ -27,9 +27,9 @@ NODE_PUBLIC_URL = os.getenv("NODE_PUBLIC_URL", "")  # e.g. "http://209.xx.xx.xx:
 # Maximum parallel generate-video jobs on this VM
 MAX_CONCURRENT_JOBS = 1
 
-PROMPTS_DIR = "/root/gemini_prompts"
-OUTPUT_ROOT = "/root/output"     # /root/output/<job_id>/...
-JOBS_DIR    = "/root/jobs"       # /root/jobs/<job_id>/meta.json
+PROMPTS_DIR = "/app/gemini_prompts"
+OUTPUT_ROOT = "/app/output"     # /root/output/<job_id>/...
+JOBS_DIR    = "/app/jobs"       # /root/jobs/<job_id>/meta.json
 
 Path(OUTPUT_ROOT).mkdir(parents=True, exist_ok=True)
 Path(JOBS_DIR).mkdir(parents=True, exist_ok=True)
