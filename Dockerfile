@@ -37,7 +37,7 @@ COPY package.json package-lock.json* /app/
 RUN npm install --no-cache
 
 # ───────── COPY START SCRIPT ─────────
-COPY start.sh /app/start.sh
+COPY app/start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
 # ───────── EXPOSE PORTS ─────────
