@@ -25,7 +25,7 @@ RUN python3 -m pip install --upgrade pip setuptools wheel
 WORKDIR /app
 
 # ───────── COPY APP FILES ─────────
-COPY ./app /app
+COPY ./app
 
 # ───────── INSTALL PYTHON DEPENDENCIES ─────────
 RUN pip install --no-cache-dir -r requirements.txt
