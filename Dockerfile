@@ -41,6 +41,8 @@ RUN apt-get update && apt-get upgrade -y && \
       libxtst6 \
       xdg-utils \
       wget \
+      novnc \
+      websockify \
       curl \
       # Desktop + VNC
       xfce4 xfce4-goodies tightvncserver dbus-x11 xfonts-base \
