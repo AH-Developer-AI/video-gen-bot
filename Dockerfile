@@ -1,15 +1,13 @@
-# ───────── BASE IMAGE ─────────
 FROM ubuntu:22.04
 
-# ───────── ENVIRONMENT ─────────
 ENV DEBIAN_FRONTEND=noninteractive
 ENV DISPLAY=:1
+ENV NODE_WORKDIR=/app
 ENV SCREEN_WIDTH=1280
 ENV SCREEN_HEIGHT=720
 ENV SCREEN_DEPTH=24
-ENV NODE_WORKDIR=/app
 
-# ───────── SYSTEM + CHROME/PUPPETEER LIBS + NODE 20 ─────────
+# ---- System + Chrome/Puppeteer libs + Desktop + VNC + Python + Node ----
 RUN apt-get update && apt-get upgrade -y && \
     apt-get install -y \
       ca-certificates \
@@ -44,35 +42,38 @@ RUN apt-get update && apt-get upgrade -y && \
       xdg-utils \
       wget \
       curl \
-      xvfb \
-      x11vnc \
-      fluxbox \
-      novnc \
-      websockify \
+      # Desktop + VNC
+      xfce4 xfce4-goodies tightvncserver dbus-x11 xfonts-base \
+      # Python stack
       python3 python3-pip python3-dev build-essential libffi-dev libssl-dev \
       git \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# ───────── PYTHON: FASTAPI + UVICORN + DOTENV ─────────
+# ---- Python deps ----
 RUN python3 -m pip install --upgrade pip setuptools wheel
 COPY requirements.txt /app/requirements.txt
 RUN pip3 install --no-cache-dir -r /app/requirements.txt
 
-# ───────── NODE: PUPPETEER DEPENDENCIES ─────────
+# ---- Node deps (Puppeteer etc.) ----
 WORKDIR /app
 COPY package.json package-lock.json* /app/
 RUN npm install --unsafe-perm --legacy-peer-deps
 
-# ───────── APP CODE ─────────
+# ---- App code ----
 COPY app /app/app
 COPY generate_login_incognito.js /app/
 COPY app/start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
-# ───────── PORTS ─────────
-EXPOSE 5900 6080 8000
+# ---- VNC xstartup (XFCE) ----
+RUN mkdir -p /root/.vnc && \
+    printf '#!/bin/sh\nunset SESSION_MANAGER\nunset DBUS_SESSION_BUS_ADDRESS\nstartxfce4 &\n' > /root/.vnc/xstartup && \
+    chmod +x /root/.vnc/xstartup
 
-# ───────── START COMMAND ─────────
+# ---- Ports ----
+EXPOSE 5901 8000
+
+# ---- CMD ----
 CMD ["/app/start.sh"]
