@@ -18,23 +18,22 @@ from threading import Lock
 app = FastAPI()
 
 # ───────── CONFIG ─────────
-NODE_WORKDIR = "/app"   # Changed from /root
+
+NODE_WORKDIR = "/root"   # Ensure generate_login_incognito.js is here
 GENERATE_SCRIPT = "generate_login_incognito.js"
 NODE_ID = os.getenv("NODE_ID", "vm-unknown")
-NODE_PUBLIC_URL = os.getenv("NODE_PUBLIC_URL", "")
+NODE_PUBLIC_URL = os.getenv("NODE_PUBLIC_URL", "")  # e.g. "http://209.xx.xx.xx:8000"
 
-MAX_CONCURRENT_JOBS = 2
+# Maximum parallel generate-video jobs on this VM
+MAX_CONCURRENT_JOBS = 1
 
-# Paths update karein
-PROMPTS_DIR = "/app/gemini_prompts"
-OUTPUT_ROOT = "/app/output"
-JOBS_DIR    = "/app/jobs"
+PROMPTS_DIR = "/root/gemini_prompts"
+OUTPUT_ROOT = "/root/output"     # /root/output/<job_id>/...
+JOBS_DIR    = "/root/jobs"       # /root/jobs/<job_id>/meta.json
 
-# Directory create karna zaroori hai
 Path(OUTPUT_ROOT).mkdir(parents=True, exist_ok=True)
 Path(JOBS_DIR).mkdir(parents=True, exist_ok=True)
 Path(PROMPTS_DIR).mkdir(parents=True, exist_ok=True)
-
 
 # Static mount for videos: /output/<job_id>/<filename>.mp4
 app.mount("/output", StaticFiles(directory=OUTPUT_ROOT), name="output")
