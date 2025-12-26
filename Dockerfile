@@ -1,13 +1,15 @@
+# ───────── BASE IMAGE ─────────
 FROM ubuntu:22.04
 
+# ───────── ENVIRONMENT ─────────
 ENV DEBIAN_FRONTEND=noninteractive
 ENV DISPLAY=:1
-ENV NODE_WORKDIR=/app
 ENV SCREEN_WIDTH=1280
 ENV SCREEN_HEIGHT=720
 ENV SCREEN_DEPTH=24
+ENV NODE_WORKDIR=/app
 
-# ---- System + Chrome/Puppeteer libs + Desktop + VNC + Python + Node ----
+# ───────── SYSTEM + CHROME/PUPPETEER LIBS + NODE 20 ─────────
 RUN apt-get update && apt-get upgrade -y && \
     apt-get install -y \
       ca-certificates \
@@ -41,41 +43,36 @@ RUN apt-get update && apt-get upgrade -y && \
       libxtst6 \
       xdg-utils \
       wget \
+      curl \
+      xvfb \
+      x11vnc \
+      fluxbox \
       novnc \
       websockify \
-      curl \
-      # Desktop + VNC
-      xfce4 xfce4-goodies tightvncserver dbus-x11 xfonts-base \
-      # Python stack
       python3 python3-pip python3-dev build-essential libffi-dev libssl-dev \
       git \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# ---- Python deps ----
+# ───────── PYTHON: FASTAPI + UVICORN + DOTENV ─────────
 RUN python3 -m pip install --upgrade pip setuptools wheel
 COPY requirements.txt /app/requirements.txt
 RUN pip3 install --no-cache-dir -r /app/requirements.txt
 
-# ---- Node deps (Puppeteer etc.) ----
+# ───────── NODE: PUPPETEER DEPENDENCIES ─────────
 WORKDIR /app
 COPY package.json package-lock.json* /app/
 RUN npm install --unsafe-perm --legacy-peer-deps
 
-# ---- App code ----
+# ───────── APP CODE ─────────
 COPY app /app/app
 COPY generate_login_incognito.js /app/
 COPY app/start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
-# ---- VNC xstartup (XFCE) ----
-RUN mkdir -p /root/.vnc && \
-    printf '#!/bin/sh\nunset SESSION_MANAGER\nunset DBUS_SESSION_BUS_ADDRESS\nstartxfce4 &\n' > /root/.vnc/xstartup && \
-    chmod +x /root/.vnc/xstartup
+# ───────── PORTS ─────────
+EXPOSE 5900 6080 8000
 
-# ---- Ports ----
-EXPOSE 5901 8000
-
-# ---- CMD ----
+# ───────── START COMMAND ─────────
 CMD ["/app/start.sh"]
