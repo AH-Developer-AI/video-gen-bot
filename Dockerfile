@@ -25,7 +25,6 @@ RUN python3 -m pip install --upgrade pip setuptools wheel
 WORKDIR /app
 
 # ───────── COPY AND INSTALL PYTHON DEPENDENCIES ─────────
-# Copy requirements.txt first to leverage caching
 COPY requirements.txt /app/requirements.txt
 RUN pip3 install --no-cache-dir -r requirements.txt
 
@@ -36,11 +35,15 @@ COPY app /app/app
 COPY package.json package-lock.json* /app/
 RUN npm install --unsafe-perm --legacy-peer-deps
 
+# ───────── COPY GENERATOR SCRIPT ─────────
+COPY generate_login_incognito.js /app/
+
 # ───────── COPY START SCRIPT ─────────
 COPY app/start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
 # ───────── EXPOSE PORTS ─────────
+# 5900 = raw VNC, 6080 = noVNC, 8000 = FastAPI
 EXPOSE 5900 6080 8000
 
 # ───────── START COMMAND ─────────
