@@ -34,7 +34,7 @@ COPY app /app/app
 
 # ───────── COPY NODE FILES AND INSTALL DEPENDENCIES ─────────
 COPY package.json package-lock.json* /app/
-RUN npm install --no-cache
+RUN npm install --unsafe-perm --legacy-peer-deps
 
 # ───────── COPY START SCRIPT ─────────
 COPY app/start.sh /app/start.sh
