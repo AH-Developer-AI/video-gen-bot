@@ -1,9 +1,7 @@
 {
-  "name": "gemini-video-bot",
+  "name": "gemini-generator",
   "version": "1.0.0",
-  "description": "Video generation bot",
-  "main": "generate_login_incognito.js",
   "dependencies": {
-    "puppeteer": "^21.0.0"
+    "puppeteer": "^21.0.1"
   }
 }
