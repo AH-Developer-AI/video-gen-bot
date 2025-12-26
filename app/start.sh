@@ -14,4 +14,5 @@ echo "🚀 Starting noVNC web interface..."
 /usr/share/novnc/utils/launch.sh --vnc localhost:5900 &
 
 echo "🚀 Starting FastAPI app..."
+cd /app/app
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
